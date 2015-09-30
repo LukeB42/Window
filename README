@@ -1,0 +1,16 @@
+Welcome to window.py.
+
+window.py provides simple abstractions for making sophisticated TUIs.
+We'll handle scaling your window panes relative to the size of the terminal,
+fitting them to their content, and drawing them relative to eachother.
+
+Positioning them is as simple as defining how they're ordered in a list.
+
+You don't have to worry about cursor positioning (unless you want to), or
+drawing off the screen. window.py takes care of overflow and text wrapping.
+
+To get started:
+
+  Install the library with "sudo python setup.py install".
+  Have a nosey around the examples directory.
+  Enjoy.
