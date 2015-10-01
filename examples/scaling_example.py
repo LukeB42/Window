@@ -12,7 +12,7 @@ class TestPane(Pane):
 	def update(self):
 		import hashlib, random
 		if self.name == "test pane 1":
-			new_line = 'Copyright RedFlag Alert 2015.\n^D or ^Q to exit.\n'
+			new_line = 'Scaling example.\n^D or ^Q to exit.\n'
 		else:
 			new_line = hashlib.sha1(str(random.randint(0,9))).hexdigest() + '\n'
 		new_line += "h: %i w: %i\n" % (self.height, self.width)
