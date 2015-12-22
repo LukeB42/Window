@@ -17,6 +17,7 @@ setup(name='window',
       author='Luke Brooks',
       author_email='luke@psybernetics.org',
       url="http://github.com/LukeB42/Window",
+      download_url="http://github.com/LukeB42/Window/tarball/0.1",
       version='0.0.1',
       py_modules=['window'],
       long_description="""
