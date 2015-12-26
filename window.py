@@ -604,7 +604,8 @@ class Window(object):
         if h > self.height or w > self.width:
             return
         try:
-            self.window.addstr(h, w, text, attrs)
+            # Python curses addstr doesn't deal with non-ascii characters
+            self.window.addstr(h, w, text.encode("ascii", "ignore"), attrs)
         except Exception, e:
             pass
 

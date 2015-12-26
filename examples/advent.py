@@ -55,9 +55,9 @@ class HealthBar(Pane):
 		healthbar += ' ' * (amt - len(healthbar))
 
 		if h[0] < (h[1] / 3):
-			colours = palette("black", "yellow")
-		elif h[0] < (h[1] / 2):
 			colours = palette("black", "red")
+		elif h[0] < (h[1] / 2):
+			colours = palette("black", "yellow")
 		else:
 			colours = palette("black", "green")
 
