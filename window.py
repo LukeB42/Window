@@ -36,19 +36,10 @@ class Window(object):
 
     Set blocking to True to wait for input before redrawing the screen.
     Set debug to True to draw any exception messages and to print character codes on the last line.
-    """
-    running    = None
-    blocking   = None
-    debug      = None
-    window     = None
-    height     = None
-    width      = None
-    panes      = []
-    pane_cache = []
-    exit_keys  = []
-    friendly   = True
-    delay      = 0.030
 
+    In non-blocking mode a default delay of 0.030 seconds (as the interpreter can clock them..) is
+    used so as not hog CPU time. Higher values can be used for implementing things like wall clocks.
+    """
     def __init__(self, blocking=True):
         """
         Create a Window instance.
@@ -56,7 +47,18 @@ class Window(object):
         You may want to wait for user input if the connection is over SSH.
         This can be done by checking for 'SSH_CONNECTION' in os.environ.
         """
-        self.blocking = blocking
+        self.blocking   = blocking
+        self.running    = None
+        self.blocking   = None
+        self.debug      = None
+        self.window     = None
+        self.height     = None
+        self.width      = None
+        self.panes      = []
+        self.pane_cache = []
+        self.exit_keys  = []
+        self.friendly   = True
+        self.delay      = 0.030
 
     def start(self):
         """
@@ -786,6 +788,28 @@ class Pane(object):
         """
         pass
 
+    def __iadd__(self, data):
+        """
+        This overrides the += assignment operator to make it possible to append
+        new text to a pane either by assuming the 0th element in self.content
+        or by using a tuple and specifying the index as the first element.
+        """
+        if isinstance(data, (unicode, str)):
+            if len(self.content):
+                self.content[0][0] += data
+            else:
+                self.change_content(0, data, align=ALIGN_LEFT, attrs=1)
+        elif isinstance(data, (tuple, list)):
+            if len(data) < 2:
+                return self
+            if not isinstance(data[0], int):
+                return self
+            if len(self.content) < data[0]+1:
+                self.change_content(data[0], data[1], align=ALIGN_LEFT, attrs=1)
+                return self
+            self.content[data[0]][0] += data[1] 
+        return self
+
     def change_content(self, index, text, align=ALIGN_LEFT, attrs=1):
         self.whoami = str(self)
         if index > len(self.content) and len(self.content): return
@@ -872,8 +896,11 @@ class Editor(Pane):
         elif character == 10 or character == 13: # Handle the return key
             self.buffer += "\n"
         else:
-            try: self.buffer += chr(character)   # Append input to buffer
-            except: pass
+            try:
+                self.buffer += chr(character)   # Append input to buffer
+            except:
+                # Shouldn't no-op here but there really isn't anything to do.
+                pass
         import random
         colours = palette(-1, random.choice(["blue","red"]))
         self.change_content(0, self.buffer, ALIGN_LEFT, colours)
