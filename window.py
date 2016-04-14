@@ -2,7 +2,7 @@
 # Defines a simple ncurses window, an event loop and some panes.
 import time
 import _curses
-VERSION = "0.0.1"
+VERSION = "0.0.3"
 
 FIT     = "FIT"              # pane axis hugs its content
 EXPAND  = "EXPAND"           # stretch on axis as much as possible

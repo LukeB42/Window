@@ -20,13 +20,13 @@ Asia/Tokyo
 class WorldClock(window.Pane):
     geometry = [window.EXPAND, window.EXPAND]
     def update(self):
-        self.change_content(0, "", window.ALIGN_LEFT, window.palette(-1,-1))
+        self.change_content(0, "")
         for i, timezone in enumerate(times.split('\n')):
             if not timezone: continue
             # We can append the text to the zeroth content frame using the
             # additive assignment operator. Specifying which frame to append to
-            # is done with an int as the first element in a tuple:
-            # self += (1, "This is concatenated on to the second content frame.")
+            # is done with an int as the first element of a tuple or list:
+            # self += (1, "This is concatenated onto the second content frame.")
             tz = pytz.timezone(timezone)
             self += datetime.now(tz).strftime(timezone + "\t%H:%M")
             if not i % 2:
