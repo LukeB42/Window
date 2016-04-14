@@ -5,12 +5,15 @@ import random
 from window import Window, Pane, Menu, EXPAND, FIT, ALIGN_LEFT, palette
 
 class Person(object):
-    level   = 1
-    health  = [100, 100] # [actual, maximum]
-    mana    = [100, 100]
-    money   = 100
-    weapons = None
-    weapons = []
+    """
+    """
+    def __init__(self):
+        self.level   = 1
+        self.health  = [100, 100] # [actual, maximum]
+        self.mana    = [100, 100]
+        self.money   = 100
+        self.weapons = None
+        self.weapons = []
 
 class Player(Person):
     pass
@@ -73,7 +76,7 @@ class ManaBar(Pane):
 
         amt = int(self.width * float(h[0]) / float(h[1]))
         
-        healthbar = "Mana:   %3.f/%i" % (h[0],h[1]) 
+        healthbar = "Mana: %3.f/%i" % (h[0],h[1]) 
         healthbar += ' ' * (amt - len(healthbar))
 
         if h[0] < (h[1] / 4):
@@ -92,9 +95,45 @@ class GameArea(Pane):
     The main area where events are written to.
     """
     geometry = [EXPAND, EXPAND]
+    intro = """Light, Cytoplasm, RNA messenger molecules,
+Intention, Abstraction, Message Integrity, Omnidirectional Infinity
 
+You find yourself manifesting onwards from beyond all spheres of force and matter.
+
+A definite spacetime condenses into view.
+
+
+You're perceptually drifting along the starboard side of a marchant frigate.
+
+The frigate is heading for the orbit of a nearby planet.
+
+
+You feel the articulation of suit thrusters guiding you on autopilot alongside
+the frigate.
+
+Somewhere in your heart a Mandelbrot set zooms in and out simultaneously.
+
+Solve articulation with the passive neural interface to latch on at an airlock.
+"""
+
+    outro = """
+You think the required forms to shift through a thin veil of dust, towards
+the body of the frigate. The onboard guidance computer flies by wire to a
+maintenence station.
+
+<YOU ARE NOT A DROID>
+
+A signal convulses either you, the suit, or the entire yousuit assembly into taking heed
+
+The drone on your back detaches and having been assaying the signals coming from
+the frigate the whole time, begins performing aikido in terms of the authentication
+protocol used for accessing a maintenence tunnel.
+
+The drone is not a smooth talker. The frigate thinks of you as a hostile parasite.
+"""
     def update(self):
-        self.change_content(0, "You are likely to be eaten by a grue.", ALIGN_LEFT, palette("red"))
+        if not self.content:
+            self.change_content(0, self.intro, ALIGN_LEFT, palette(-1,-1))
 
     def process_input(self, character):
         # self.window.player.health[0] -= 1
@@ -108,7 +147,7 @@ class Input(Pane):
     buffer   = ""
 
     def update(self):
-        new_line = ">"
+        new_line = "> "
         self.change_content(0, new_line)
 #        if len(self.content) >= 2:
 #            self.change_content(2, "%i\n" % len(self.buffer))
@@ -123,6 +162,17 @@ class Input(Pane):
                 menu = self.window.get("menu")
                 menu.hidden = False if menu.hidden else True
                 menu.active = True if not menu.active else False
+            # Yup... Can launch ptpython with the "python" command.
+            elif "python" in inputs:
+                try:
+                    from ptpython.repl import embed
+                    self.window.stop()
+                    l = {"pane": self, "window": self.window}
+                    embed(locals=l, vi_mode=True)
+                    self.buffer = ""
+                    self.window.start()
+                except:
+                    pass
             elif "exit" in inputs:
                 self.window.stop()
             self.buffer = ""
@@ -130,7 +180,7 @@ class Input(Pane):
             try: self.buffer += chr(character)   # Append input to buffer
             except: pass
         import random
-        colours = palette(-1, random.choice(["blue","red"]))
+        colours = palette(-1, random.choice(["yellow","red"]))
         self.change_content(1, self.buffer, ALIGN_LEFT, colours)
 
 class TestMenu(Menu):
@@ -139,31 +189,15 @@ class TestMenu(Menu):
     """
     geometry = [FIT, FIT]
     items = [
-              [1, 'Hello,','handle_hello'],      # [selected, text, function]
-              [0, 'world','handle_world'],
-              [0, 'fight','handle_fight'],
+              [1, 'fight','handle_fight'],
               [0, 'items','handle_items'],
               [0, 'magic','handle_magic'],
               [0, 'flee','handle_flee'],
     ]
 
-    def handle_hello(self):
-        phrase = "Hello."
-        self.window.addstr(self.window.height-1,
-            self.window.width - len(phrase), phrase)
-
-    def handle_world(self):
-        phrase = "World."
-        self.window.addstr(self.window.height-1,
-            self.window.width - len(phrase), phrase)
-
     def handle_fight(self):
-        if self.window.blocking:
-            self.window.blocking = False
-            self.window.window.nodelay(1)
-        else:
-            self.window.blocking = True
-            self.window.window.nodelay(0)
+        gamearea = self.window.get("gamearea")
+        gamearea.change_content(0, "The Grue dissolved.", ALIGN_LEFT, palette(-1,-1))
 
     def handle_items(self):
         for p in reversed(self.window.panes):
@@ -185,7 +219,7 @@ class TestMenu(Menu):
 def start_sequence(window, start_window=True):
     print "Hi. What's your name?"
     window.player.name = raw_input("> ")
-    print "Hello %s. " % window.player.name,
+    print "Hello %s." % window.player.name,
     classes = ["Magi", "Warrior", "Thief", "Engineer"]
     def choose_class():
         print "What's your class?"
@@ -199,8 +233,8 @@ def start_sequence(window, start_window=True):
     selection = choose_class()
     print selection
     window.player.pclass = PClass(classes[selection])
-    print "Cool. A %s. Choose your weapon!" % window.player.pclass.class_type
-    window.player.weapons.append(Weapon(raw_input("> ")))
+#    print "Cool. A %s. Choose your weapon!" % window.player.pclass.class_type
+#    window.player.weapons.append(Weapon(raw_input("> ")))
 
     if start_window:
         window.start()
@@ -216,10 +250,11 @@ if __name__ == "__main__":
     window.player = Player()
 
     manabar = ManaBar("manabar")
-    window.add(manabar)
+#    manabar.hidden = True
 
     healthbar = HealthBar("healthbar")
-    window.add(healthbar)
+#    healthbar.hidden = True
+    window.add([healthbar, manabar])
 
     input_pane = Input("input")
     input_pane.active = True
