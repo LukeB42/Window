@@ -7,12 +7,12 @@ class Menu(Pane):
     """
     geometry = [EXPAND, EXPAND]
     # Default and selection colours.
-    col = [-1, -1] # fg, bg, default.
-    sel = [-1,  "blue"]  # Selected
-    pin = [-1, "yellow"] # Pinned
-    sap = [-1, "green"] # Selected and pinned
+    col   = [-1, -1]       # fg, bg, default.
+    sel   = [-1, "blue"]   # Selected
+    pin   = [-1, "yellow"] # Pinned
+    sap   = [-1, "green"]  # Selected and pinned
     items = [
-              [1, 'Hello','handle_hello'],      # [selected, text, function]
+              [1, 'Hello','handle_hello'], # [selected, text, function]
               [0, 'world','handle_world'],
               [0, 'fight','handle_fight'],
               [0, 'items','handle_items'],
@@ -40,7 +40,7 @@ class Menu(Pane):
             self.change_content(i, text + '\n', ALIGN_LEFT, colours)
 
     def process_input(self, character):
-        # Handle the return key.
+        # Return key to invoke.
         if character == 10 or character == 13:
             for i, item in enumerate(self.items):
                 if item[0]:    
@@ -48,39 +48,29 @@ class Menu(Pane):
                     if func:
                         func()
 
-        # Pin items (spacebar by default)
+        # Spacebar to pin.
         elif character == 32:
             for i, item in enumerate(self.items):
                 if item[0]:
-                    if item[0] == 3:
-                        self.items[i][0] = 1
-                    else:
+                    
+                    if item[0] == 1:
                         self.items[i][0] = 3
+                    elif item[0] == 3:
+                        self.items[i][0] = 1
+                    
+                    # Iterate if subsequent items are selected.
+                    if any(filter(lambda x: x[0] in [1, 3], self.items[i:])):
+                        continue
+                    
                     break
 
         # Handle menu navigation.
         elif character in [259, 258, 339, 338]:
             for i, item in enumerate(self.items):
                 if item[0]:    
-                    if character == 259:             # up arrow
+                    if character == 259: # up arrow
                         if i == 0: break
 
-                        # Deselect the current item.
-                        if item[0] in [1, 3]:
-                            item[0] -= 1
-                        
-                        # Iterate if prior items are selected.
-                        if any(filter(lambda x: x[0] in [1, 3], self.items[i:])):
-                            continue
-                       
-                        # Select the previous item if it's unselected.
-                        if self.items[i-1][0] in [0, 2]:
-                            self.items[i-1][0] += 1
-
-                        break
-                    if character == 258:             # down arrow
-                        if i+1 >= len(self.items): break
-                        
                         # Deselect the current item.
                         if item[0] in [1, 3]:
                             item[0] -= 1
@@ -89,18 +79,31 @@ class Menu(Pane):
                         if any(filter(lambda x: x[0] in [1, 3], self.items[i:])):
                             continue
                        
-                        # Select the next item if it's unselected.
+                        # Select the previous item if it's unselected.
+                        if self.items[i-1][0] in [0, 2]:
+                            self.items[i-1][0] += 1
+
+                        break
+                    if character == 258: # down arrow
+                        if i+1 >= len(self.items): break
+                        
+                        if item[0] in [1, 3]:
+                            item[0] -= 1
+                        
+                        if any(filter(lambda x: x[0] in [1, 3], self.items[i:])):
+                            continue
+                       
                         if self.items[i+1][0] in [0, 2]:
                             self.items[i+1][0] += 1
 
                         break
-                    if character == 339:             # page up
+                    if character == 339: # page up
                         if item[0] != 2:
                             item[0] = 0
                         if self.items[0][0] != 2:
                             self.items[0][0] = 1
                         break
-                    if character == 338:             # page down
+                    if character == 338: # page down
                         if item[0] != 2:
                             item[0] = 0
                         if self.items[-1][0] != 2:
