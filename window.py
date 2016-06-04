@@ -136,6 +136,7 @@ class Window(object):
 
             y = 0 # from top
             x = 0 # from left
+            l = 0 # line length
             for frame in pane.content:
                 (text, align, attrs) = frame
                 for i, line in enumerate(text.split("\n")):
@@ -449,8 +450,8 @@ class Window(object):
 
                     tracking += pane.height
 
-        s = "Growing rows: %i, %s number of rows: %s, claimed: %i, remaining: %i, remaining/growing: %i,rmodg: %i" % \
-            (g, "odd" if self.height % 2 else "even", self.height, claimed_columns,remaining_space, typical_expanse, remaining_space%g)
+        #s = "Growing rows: %i, %s number of rows: %s, claimed: %i, remaining: %i, remaining/growing: %i,rmodg: %i" % \
+        #    (g, "odd" if self.height % 2 else "even", self.height, claimed_columns,remaining_space, typical_expanse, remaining_space%g)
 #        self.addstr(self.height-1, self.width-len(s),s)
 
         # Then a pass for widths.
@@ -571,6 +572,7 @@ class Window(object):
         for i, element in enumerate(self.panes):
             x = 0 # width
             if isinstance(element, list):
+                current_height = 0
                 for j, pane in enumerate(element):
                     if pane.hidden: continue
                     current_width  = pane.width
