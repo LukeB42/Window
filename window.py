@@ -137,6 +137,10 @@ class Window(object):
             y = 0 # from top
             x = 0 # from left
             l = 0 # line length
+
+            # You will see some conversions to int within slices in the following section.
+            # This is to ensure Python 3 compatibility.
+
             for frame in pane.content:
                 (text, align, attrs) = frame
                 for i, line in enumerate(text.split("\n")):
@@ -158,10 +162,10 @@ class Window(object):
                                 # and the bottom left inverts
                                 if bottom_left_top < bottom_right_top and y >= bottom_left_top:
                                     # then perform lower left to top right corner inversion
-                                    line = line[:top_right_left - bottom_left_left]
+                                    line = line[:int(top_right_left - bottom_left_left)]
                                 else:
                                     # otherwise our line length is from the top left to the top-right
-                                    line = line[:top_right_left - top_left_left]
+                                    line = line[:int(top_right_left - top_left_left)]
 
                         # Honour inverted lower right corners
                         if bottom_right_top < bottom_left_top or top_right_left > bottom_right_left:
@@ -171,10 +175,10 @@ class Window(object):
                                 # and the top left inverts
                                 if top_left_top > top_right_top and y >= top_left_top:
                                     # then perform upper left to lower right inversion
-                                    line = line[:bottom_right_left - top_left_left]
+                                    line = line[:int(bottom_right_left - top_left_left)]
                                 # otherwise our line length is from bottom left to bottom right
                                 else:
-                                    line = line[:bottom_right_left - bottom_left_left]
+                                    line = line[:int(bottom_right_left - bottom_left_left)]
 
                         # Honour inverted upper left corners
                         if top_left_left > bottom_left_left or top_left_top > top_right_top:
@@ -187,7 +191,7 @@ class Window(object):
                                     line = line[:bottom_right_left - top_left_left]
                                 # otherwise we're just fitting to the coordinates
                                 else:
-                                    line = line[:top_right_left - top_left_left]
+                                    line = line[:int(top_right_left - top_left_left)]
 
                         # Honour inverted lower left corners
                         if bottom_left_left > top_left_left:
@@ -197,16 +201,16 @@ class Window(object):
                                 # and the upper right inverts
                                 if top_right_top > top_left_top and y <= top_right_top:
                                     # perform lower left to top right inversion
-                                    line = line[:top_right_left - bottom_left_left]
+                                    line = line[:int(top_right_left - bottom_left_left)]
                                 # otherwise we're just fitting to the coordinates
                                 else:
-                                    line = line[:bottom_right_left - bottom_left_left]
+                                    line = line[:int(bottom_right_left - bottom_left_left)]
 
                         # All non-wrapping panes
                         if l > pane.width:
                             line = line[:pane.width]
                         if top_left_left+x+l > self.width:
-                            line = line[:self.width - top_left_left]
+                            line = line[:int(self.width - top_left_left)]
 
                     # Purposefully wrap panes by incrementing y and resetting x
                     # pane.wrap = 1 for wordwrapping
@@ -280,7 +284,7 @@ class Window(object):
         """
         try:
             character = self.window.getch()
-        except Exception, e:
+        except Exception as e:
             character = -1
             if self.debug:
                 self.addstr(self.height-1, self.width - len(e.message) + 1, e.message)
@@ -609,8 +613,9 @@ class Window(object):
             return
         try:
             # Python curses addstr doesn't deal with non-ascii characters
-            self.window.addstr(h, w, text.encode("ascii", "ignore"), attrs)
-        except Exception, e:
+            #self.window.addstr(h, w, text.encode("ascii", "ignore"), attrs)
+            self.window.addstr(h, w, text, attrs)
+        except Exception as e:
             pass
 
     def update_window_size(self):

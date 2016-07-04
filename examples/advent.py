@@ -1,8 +1,15 @@
 #!/usr/bin/env python
 # _*_ coding: utf-8 _*_
 # An adventure game example
+import sys
 import random
 from window import Window, Pane, Menu, EXPAND, FIT, ALIGN_LEFT, palette
+
+
+if sys.version_info.major == 2:
+    get_input = raw_input
+else:
+    get_input = input
 
 class Person(object):
     """
@@ -67,7 +74,7 @@ class HealthBar(Pane):
             colours = palette("black", "green")
 
         self.change_content(0, healthbar, ALIGN_LEFT, colours)
-        self.change_content(1, ' ' * (self.width - len(healthbar)), ALIGN_LEFT, palette(-1,-1))
+        self.change_content(1, ' ' * int(self.width - len(healthbar)), ALIGN_LEFT, palette(-1,-1))
 
 class ManaBar(Pane):
     geometry = [EXPAND, 1]
@@ -87,7 +94,7 @@ class ManaBar(Pane):
             colours = palette("black", "blue")
 
         self.change_content(0, healthbar, ALIGN_LEFT, colours)
-        self.change_content(1, ' ' * (self.width - len(healthbar)), ALIGN_LEFT, palette(-1,-1))
+        self.change_content(1, ' ' * int(self.width - len(healthbar)), ALIGN_LEFT, palette(-1,-1))
 
 
 class GameArea(Pane):
@@ -217,21 +224,21 @@ class TestMenu(Menu):
         self.window.stop()
 
 def start_sequence(window, start_window=True):
-    print "Hi. What's your name?"
-    window.player.name = raw_input("> ")
-    print "Hello %s." % window.player.name,
+    print("Hi. What's your name?")
+    window.player.name = get_input("> ")
+    print("Hello %s." % window.player.name,)
     classes = ["Magi", "Warrior", "Thief", "Engineer"]
     def choose_class():
-        print "What's your class?"
+        print("What's your class?")
         for i,c in enumerate(classes):
-            print "%i: %s" % (i,c)
-        selection = raw_input("> ")
+            print("%i: %s" % (i, c))
+        selection = get_input("> ")
         if selection.isdigit():
             return int(selection)
         else:
             choose_class()
     selection = choose_class()
-    print selection
+    print(selection)
     window.player.pclass = PClass(classes[selection])
 #    print "Cool. A %s. Choose your weapon!" % window.player.pclass.class_type
 #    window.player.weapons.append(Weapon(raw_input("> ")))
@@ -239,7 +246,7 @@ def start_sequence(window, start_window=True):
     if start_window:
         window.start()
 
-    print "You retired from your adventure at level %i." % window.player.level
+    print("You retired from your adventure at level %i." % window.player.level)
 
 if __name__ == "__main__":
     window = Window()
@@ -269,5 +276,5 @@ if __name__ == "__main__":
         start_sequence(window)
     except KeyboardInterrupt:
         window.stop()
-        print "^C"
+        print("^C")
         raise SystemExit
