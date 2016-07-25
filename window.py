@@ -81,11 +81,22 @@ class Window(object):
             self.window.nodelay(1)
         self.running = True
         while self.running:
-            self.draw()
-            self.process_input()
+            self.cycle()
             if self.friendly and not self.blocking:
                 time.sleep(self.delay)
         self.stop()
+
+    def cycle(self):
+        """
+        Permits composition with asyncio/your own event loop.
+        while True:
+            sockets.poll()
+            update_with_network_data(window)
+            window.cycle()
+        """
+        
+        self.draw()
+        self.process_input()
 
     def stop(self):
         """
