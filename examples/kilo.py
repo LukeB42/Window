@@ -1,120 +1,160 @@
-#!/usr/bin/env python
-# _*_ coding: utf-8 _*_ 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+kilo.py — a minimal text editor built on window.py
+
+Demonstrates UTF-8 support: the initial buffer contains Japanese, Arabic,
+Russian, emoji and full-width CJK characters so you can verify that
+arbitrary Unicode renders correctly and that backspace removes whole
+code-points (not bytes).
+
+Controls
+--------
+^X  quit          ^O  save to file
+^W  delete word   ^K  yank (cut) line
+^A  run last line as shell command
+"""
 import os
 import sys
 import subprocess
 from window import *
 
+
+# Seed buffer with multi-script UTF-8 text so the UTF-8 path is exercised
+# immediately on launch.
+UTF8_SAMPLE = (
+    "# UTF-8 test — edit freely, ^X to quit\n"
+    "日本語: 東京タワー  (Japanese full-width + kana)\n"
+    "العربية: مرحبا بالعالم     (Arabic RTL — rendered LTR in terminal)\n"
+    "Русский: Привет, мир!      (Cyrillic)\n"
+    "Emoji:   🎹 🎸 🥁 🎷 🎺  (multi-byte emoji)\n"
+    "Math:    ∑ ∫ ∂ √ ∞ π ≈ ≠ ≤ ≥\n"
+    "Music:   ♩ ♪ ♫ ♬ 𝄞 𝄢\n"
+    "\n"
+)
+
+
 class Editor(Pane):
     """
-    Defines a text editor/input pane.
+    Text editor pane.
+
+    Bindings
+    --------
+    ^X  exit          ^O  save
+    ^W  delete word   ^K  yank line
+    ^A  run last line as shell command
     """
-    geometry = [EXPAND, EXPAND]
-    buffer = ""
-    buffers = {}
+    geometry  = [EXPAND, EXPAND]
+    buffer    = UTF8_SAMPLE
     clipboard = ""
 
     def update(self):
-        header = "  Psybernetics kilo 0.0.1 (Python %i.%i.%i)" %\
-                (sys.version_info.major, sys.version_info.minor, sys.version_info.micro)
-        header += ' ' * (self.width - len(header))
+        header = "  Psybernetics kilo 0.0.2 (Python %d.%d.%d)" % (
+            sys.version_info.major,
+            sys.version_info.minor,
+            sys.version_info.micro,
+        )
+        header += ' ' * max(0, self.width - len(header))
         header += "\n"
-        self.change_content(0,header, ALIGN_LEFT, palette("black", "white"))
-        pass
-#        if len(self.content) >= 1:
-#            self.change_content(1, "%i\n" % len(self.buffer))
+        self.change_content(0, header, ALIGN_LEFT, palette("black", "white"))
 
     def process_input(self, character):
         self.window.window.clear()
-        self.status.change_content(0,
-                        str(character),
-                        ALIGN_LEFT,
-                        palette(-1, -1))
+        self.status.change_content(0, str(character), ALIGN_LEFT, palette(-1, -1))
 
-        if character == 23 and self.buffer:        # Delete word on ^W
-            self.buffer = self.buffer.split("\n")
-            line = self.buffer[-1].split()
-            if line:
-                line = ' '.join(line[:-1])
-            self.buffer[-1] = line
-            self.buffer = '\n'.join(self.buffer)
+        if character == 23 and self.buffer:       # ^W — delete word
+            lines = self.buffer.split("\n")
+            words = lines[-1].split()
+            lines[-1] = ' '.join(words[:-1])
+            self.buffer = '\n'.join(lines)
 
-        elif character == 11 and self.buffer:      # Yank line on ^K
-            self.buffer = self.buffer.split("\n")
-            self.clipboard = self.buffer[-1]
-            self.buffer = '\n'.join(self.buffer[:-1])
+        elif character == 11 and self.buffer:     # ^K — yank line
+            lines = self.buffer.split("\n")
+            self.clipboard = lines[-1]
+            self.buffer = '\n'.join(lines[:-1])
 
-        elif character == 15 and self.buffer:      # Write file to disk on ^O
+        elif character == 15 and self.buffer:     # ^O — save
             self.active = False
             self.status.saving = True
-        elif character == 263 and self.buffer:     # Handle backspace
+
+        elif character == 263 and self.buffer:    # Backspace — pop one code-point
             self.buffer = self.buffer[:-1]
-        elif character == 10 or character == 13:   # Handle the return key
+
+        elif character in (10, 13):               # Enter
             self.buffer += "\n"
-        elif character == 1:                       # Execute as cmd on ^A
-            line = self.buffer.split('\n')[-1]
-            line = line.split()
-            if not line: return
-            output = subprocess.Popen(line, stdout=subprocess.PIPE).communicate()[0]
-            self.buffer = self.buffer.split('\n')
-            self.buffer[-1] = output
-            f = lambda x: x.decode("ascii", "ignore") if hasattr(x, "decode") else x
-            self.buffer = '\n'.join([f(_) for _ in self.buffer])
+
+        elif character == 1:                      # ^A — run last line as shell cmd
+            line = self.buffer.split('\n')[-1].split()
+            if line:
+                try:
+                    output = subprocess.Popen(
+                        line, stdout=subprocess.PIPE
+                    ).communicate()[0]
+                    lines = self.buffer.split('\n')
+                    lines[-1] = output.decode("utf-8", "replace")
+                    self.buffer = '\n'.join(lines)
+                except Exception:
+                    pass
         else:
-            try: self.buffer += chr(character)     # Append input to buffer
-            except: pass
+            try:
+                self.buffer += chr(character)
+            except Exception:
+                pass
+
         self.change_content(1, self.buffer, ALIGN_LEFT)
         self.change_content(2, ' ', ALIGN_LEFT, palette(-1, "yellow"))
 
+
 class Status(Pane):
     geometry = [EXPAND, 1]
-    col = ["black","white"]
-#    col = ["white",-1]
-    saving = False
-    buffer = ""
+    saving   = False
+    buffer   = ""
 
     def update(self):
         if not self.saving:
-            self.compute_status_line()
+            self._compute_status_line()
 
     def process_input(self, character):
-        if self.saving:
-            self.window.window.clear()
-            if character == 15:
+        if not self.saving:
+            return
+        self.window.window.clear()
+        if character == 263 and self.buffer:     # Backspace
+            self.buffer = self.buffer[:-1]
+        elif character in (10, 13):              # Enter — write file
+            path = os.path.expanduser(self.buffer)
+            try:
+                with open(path, 'w', encoding='utf-8') as fh:
+                    fh.write(self.editor.buffer)
+            except OSError as e:
                 pass
-            elif character == 263 and self.buffer:     # Handle backspace
-                self.buffer = self.buffer[:-1]
-            elif character == 10 or character == 13:   # Handle the return key
-                path = os.path.expanduser(self.buffer)
-                fd = open(path, "w")
-                fd.write(self.editor.buffer)
-                fd.close()
-                self.buffer = ""
-                self.saving = False
-                self.editor.active = True
-            else:
-                try: self.buffer += chr(character)     # Append input to buffer
-                except: pass
-            line = "Filename: " + self.buffer
-            line += ' ' * (self.width - len(line))
-            self.change_content(0, line, ALIGN_LEFT, palette(self.col[0], self.col[1]))
+            self.buffer = ""
+            self.saving = False
+            self.editor.active = True
+        else:
+            try:
+                self.buffer += chr(character)
+            except Exception:
+                pass
+        line  = "Filename: " + self.buffer
+        line += ' ' * max(0, self.width - len(line))
+        self.change_content(0, line, ALIGN_LEFT, palette("black", "white"))
 
-    def compute_status_line(self):
-        line = ''
+    def _compute_status_line(self):
+        parts = []
         c = len(self.editor.buffer)
         if c:
-            line  = "C%i, " % c
+            parts.append("C%d" % c)
         w = len(self.editor.buffer.split())
         if w:
-            line += "W%i, " % w
-        l = len(self.editor.buffer.split('\n'))
-        if l:
-            line += "L%i" % l
-        filler =  ' ' * int(((self.width /2) - (len(line) / 2)))
-        line = filler + line
-        line += ' ' * (self.width-len(line))
-        self.change_content(0, line, ALIGN_LEFT, palette(self.col[0], self.col[1]))
-
+            parts.append("W%d" % w)
+        lc = len(self.editor.buffer.split('\n'))
+        if lc:
+            parts.append("L%d" % lc)
+        info   = ", ".join(parts)
+        filler = ' ' * max(0, (self.width // 2) - (len(info) // 2))
+        line   = filler + info
+        line  += ' ' * max(0, self.width - len(line))
+        self.change_content(0, line, ALIGN_LEFT, palette("black", "white"))
 
 
 if __name__ == "__main__":
@@ -125,7 +165,7 @@ if __name__ == "__main__":
     status.editor = editor
     window.add(editor)
     window.add(status)
-    window.exit_keys.append(24) # ^X
+    window.exit_keys.append(24)   # ^X to quit
     try:
         window.start()
     except KeyboardInterrupt:

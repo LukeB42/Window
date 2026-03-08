@@ -1,55 +1,93 @@
-#! _*_ coding: utf-8 _*_
+# -*- coding: utf-8 -*-
 # Defines a simple ncurses window, an event loop and some panes.
+import locale
 import time
+import unicodedata
 import _curses
-VERSION = "0.0.3"
 
-FIT     = "FIT"              # pane axis hugs its content
-EXPAND  = "EXPAND"           # stretch on axis as much as possible
+VERSION = "0.0.4"
 
-ALIGN_LEFT  = "ALIGN_LEFT"   # values for the align argument to Pane.change_content
-ALIGN_RIGHT = "ALIGN_RIGHT" 
-ALIGN_CENTER= "ALIGN_CENTER"
+# Initialise locale so curses can render arbitrary UTF-8 characters.
+locale.setlocale(locale.LC_ALL, "")
+
+FIT          = "FIT"           # pane axis hugs its content
+EXPAND       = "EXPAND"        # stretch on axis as much as possible
+
+ALIGN_LEFT   = "ALIGN_LEFT"   # values for the align argument to Pane.change_content
+ALIGN_RIGHT  = "ALIGN_RIGHT"
+ALIGN_CENTER = "ALIGN_CENTER"
+
+
+def display_width(text):
+    """
+    Return the number of terminal columns required to display *text*.
+    Full-width (F) and Wide (W) Unicode characters each occupy two columns;
+    combining / zero-width characters occupy zero columns.
+    All other characters occupy one column.
+    """
+    width = 0
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        if eaw in ("W", "F"):
+            width += 2
+        elif unicodedata.category(ch) in ("Mn", "Cf", "Me"):
+            pass   # combining / zero-width
+        else:
+            width += 1
+    return width
+
+
+def truncate_to_display_width(text, max_cols):
+    """Return the longest prefix of *text* whose display width <= *max_cols*."""
+    width = 0
+    out   = []
+    for ch in text:
+        eaw = unicodedata.east_asian_width(ch)
+        if eaw in ("W", "F"):
+            ch_w = 2
+        elif unicodedata.category(ch) in ("Mn", "Cf", "Me"):
+            ch_w = 0
+        else:
+            ch_w = 1
+        if width + ch_w > max_cols:
+            break
+        out.append(ch)
+        width += ch_w
+    return "".join(out)
+
 
 class WindowError(Exception):
     def __init__(self, message):
         self.message = message
-
     def __str__(self):
-        return(repr(self.message))
+        return repr(self.message)
+
 
 class PaneError(Exception):
     def __init__(self, message):
         self.message = message
-
     def __str__(self):
-        return(repr(self.message))
+        return repr(self.message)
+
 
 class Window(object):
     """
     A window can have multiple panes responsible for different things.
     This object filters input characters through the .process_input() method on all
     panes marked as active.
-    
+
     The list of panes orders panes vertically from highest to lowest.
-    Elements in the list of panes can also be lists of panes ordered from left to right.
+    Elements in the list of panes can also be lists of panes ordered left to right.
 
-    Set blocking to True to wait for input before redrawing the screen.
-    Set debug to True to draw any exception messages and to print character codes on the last line.
+    Set blocking=True to wait for input before redrawing the screen.
+    Set debug=True to draw exception messages and print character codes on the last line.
 
-    In non-blocking mode a default delay of 0.030 seconds (as the interpreter can clock them..) is
-    used so as not hog CPU time. Higher values can be used for implementing things like wall clocks.
+    In non-blocking mode a default delay of 0.030 s is used to avoid hogging the CPU.
+    Higher values can be used for wall clocks, etc.
     """
     def __init__(self, blocking=True):
-        """
-        Create a Window instance.
-
-        You may want to wait for user input if the connection is over SSH.
-        This can be done by checking for 'SSH_CONNECTION' in os.environ.
-        """
         self.blocking   = blocking
         self.running    = None
-        self.blocking   = None
         self.debug      = None
         self.window     = None
         self.height     = None
@@ -61,9 +99,7 @@ class Window(object):
         self.delay      = 0.030
 
     def start(self):
-        """
-        Window event loop
-        """
+        """Window event loop."""
         self.window = _curses.initscr()
         _curses.savetty()
         _curses.start_color()
@@ -88,20 +124,18 @@ class Window(object):
 
     def cycle(self):
         """
-        Permits composition with asyncio/your own event loop.
-        while True:
-            sockets.poll()
-            update_with_network_data(window)
-            window.cycle()
+        Permits composition with asyncio / your own event loop::
+
+            while True:
+                sockets.poll()
+                update_with_network_data(window)
+                window.cycle()
         """
-        
         self.draw()
         self.process_input()
 
     def stop(self):
-        """
-        Restore the TTY to its original state.
-        """
+        """Restore the TTY to its original state."""
         _curses.nocbreak()
         self.window.keypad(0)
         _curses.echo()
@@ -110,572 +144,408 @@ class Window(object):
         self.running = False
 
     def draw(self):
-        # Check for a resize
         self.update_window_size()
-
-        # Compute the coordinates of all currently attached panes
         self.calculate_pane_heights_and_widths()
         self.coordinate()
-
-        # update all pane content
         [pane.update() for pane in self if not pane.hidden]
 
-        # Draw panes within their areas based on pane.coords
-        # Draw pane frames, accounting for alignment, to window coordinates.
-        # If, for example, a pane is self-coordinating and its bottom right value
-        # is higher than its top right, then we can deduce that the square left with
-        # top-right as its lower-left is to be omitted from being drawn with this pane.
-        # Coordinates are of the form:
-        # [
-        #   ((top-left-from-top, top-left-from-left),
-        #    (top-right-from-top, top-right-from-left)),
-        #   ((bottom-left-from-top, bottom-left-from-left),
-        #    (bottom-right-from-top, bottom-right-from-left))
-        # ]
-
         for pane in self:
-            if pane.hidden: continue
-            # Set y,x to top left of pane.coords
-            top_left_top       = pane.coords[0][0][0]
-            top_left_left      = pane.coords[0][0][1]
-            top_right_top      = pane.coords[0][1][0]
-            top_right_left     = pane.coords[0][1][1]
-            bottom_left_top    = pane.coords[1][0][0]
-            bottom_left_left   = pane.coords[1][0][1]
-            bottom_right_top   = pane.coords[1][1][0]
-            bottom_right_left  = pane.coords[1][1][1]
+            if pane.hidden:
+                continue
 
-            y = 0 # from top
-            x = 0 # from left
-            l = 0 # line length
+            top_left_top      = pane.coords[0][0][0]
+            top_left_left     = pane.coords[0][0][1]
+            top_right_top     = pane.coords[0][1][0]
+            top_right_left    = pane.coords[0][1][1]
+            bottom_left_top   = pane.coords[1][0][0]
+            bottom_left_left  = pane.coords[1][0][1]
+            bottom_right_top  = pane.coords[1][1][0]
+            bottom_right_left = pane.coords[1][1][1]
 
-            # You will see some conversions to int within slices in the following section.
-            # This is to ensure Python 3 compatibility.
+            pane_draw_width = top_right_left - top_left_left
+
+            y = 0
+            x = 0
 
             for frame in pane.content:
                 (text, align, attrs) = frame
+
                 for i, line in enumerate(text.split("\n")):
 
-                    # Don't attempt to draw below the window
-                    if (i+y) > (bottom_left_top - top_left_top): break
-#                    if i+y > pane.height: break
-#                    if i+y > bottom_left_top or i+y > bottom_right_top: break
+                    if (i + y) > (bottom_left_top - top_left_top):
+                        break
 
-                    l = len(line)
-                    # Truncate non-wrapping panes
+                    dw = display_width(line)
+
                     if not pane.wrap:
-#                        self.truncate_to_fit(line, pane.coords)
-                        # Honour inverted upper right corners
+                        # -------------------------------------------------------- #
+                        # Alignment: set x offset within the pane before clipping  #
+                        # -------------------------------------------------------- #
+                        if align == ALIGN_RIGHT:
+                            x = max(0, pane_draw_width - dw)
+                        elif align == ALIGN_CENTER:
+                            x = max(0, (pane_draw_width - dw) // 2)
+                        else:
+                            x = 0
+
+                        # Maximum columns available from current x position
+                        max_cols = pane_draw_width - x
+
+                        # Honour inverted corners
                         if top_right_top > top_left_top or top_right_left < bottom_right_left:
-                            # if the current cursor is above or level with
-                            # where the top-right corner inverts
                             if y >= top_right_top:
-                                # and the bottom left inverts
                                 if bottom_left_top < bottom_right_top and y >= bottom_left_top:
-                                    # then perform lower left to top right corner inversion
-                                    line = line[:int(top_right_left - bottom_left_left)]
+                                    max_cols = min(max_cols, top_right_left - bottom_left_left - x)
                                 else:
-                                    # otherwise our line length is from the top left to the top-right
-                                    line = line[:int(top_right_left - top_left_left)]
+                                    max_cols = min(max_cols, top_right_left - top_left_left - x)
 
-                        # Honour inverted lower right corners
                         if bottom_right_top < bottom_left_top or top_right_left > bottom_right_left:
-                            # if the current cursor is below or level with
-                            # where the lower-right corner inverts
                             if y >= bottom_right_top:
-                                # and the top left inverts
                                 if top_left_top > top_right_top and y >= top_left_top:
-                                    # then perform upper left to lower right inversion
-                                    line = line[:int(bottom_right_left - top_left_left)]
-                                # otherwise our line length is from bottom left to bottom right
+                                    max_cols = min(max_cols, bottom_right_left - top_left_left - x)
                                 else:
-                                    line = line[:int(bottom_right_left - bottom_left_left)]
+                                    max_cols = min(max_cols, bottom_right_left - bottom_left_left - x)
 
-                        # Honour inverted upper left corners
                         if top_left_left > bottom_left_left or top_left_top > top_right_top:
-                            # if the current cursor is above or level with
-                            # where the top-left corner inverts
                             if y >= top_left_top:
-                                # and the lower right inverts
                                 if bottom_right_top < bottom_left_top and y >= bottom_right_top:
-                                    # perform upper left to lower right inversion
-                                    line = line[:bottom_right_left - top_left_left]
-                                # otherwise we're just fitting to the coordinates
+                                    max_cols = min(max_cols, bottom_right_left - top_left_left - x)
                                 else:
-                                    line = line[:int(top_right_left - top_left_left)]
+                                    max_cols = min(max_cols, top_right_left - top_left_left - x)
 
-                        # Honour inverted lower left corners
                         if bottom_left_left > top_left_left:
-                            # if the current cursor is below or level with
-                            # where the lower left corner inverts
                             if y >= bottom_left_top:
-                                # and the upper right inverts
                                 if top_right_top > top_left_top and y <= top_right_top:
-                                    # perform lower left to top right inversion
-                                    line = line[:int(top_right_left - bottom_left_left)]
-                                # otherwise we're just fitting to the coordinates
+                                    max_cols = min(max_cols, top_right_left - bottom_left_left - x)
                                 else:
-                                    line = line[:int(bottom_right_left - bottom_left_left)]
+                                    max_cols = min(max_cols, bottom_right_left - bottom_left_left - x)
 
-                        # All non-wrapping panes
-                        if l > pane.width:
-                            line = line[:pane.width]
-                        if top_left_left+x+l > self.width:
-                            line = line[:int(self.width - top_left_left)]
+                        # Global window right-edge guard
+                        max_cols = min(max_cols, self.width - (top_left_left + x))
 
-                    # Purposefully wrap panes by incrementing y and resetting x
-                    # pane.wrap = 1 for wordwrapping
-                    # pane.wrap = 2 for character wrapping
+                        if max_cols < 1:
+                            x = 0
+                            continue
+
+                        line = truncate_to_display_width(line, max_cols)
+
                     else:
-                        # The important thing to remember is that the "first line"
-                        # of a wrapping line is coming through this path
-
-                        # TODO: Wrap text based on the coordinate system
-                        if top_left_left+x+l > top_right_left - top_left_left:
-                            hilight_attrs = attrs
-
-                            if self.debug:
-                                hilight_attrs = palette("black", "yellow")
+                        # ---- word / char wrapping ---- #
+                        x = 0
+                        if top_left_left + dw > top_right_left - top_left_left:
+                            if pane.wrap == 1 or pane.wrap is True:
+                                words = line.split()
                             else:
-                                hilight_attrs = attrs
+                                words = list(line)
 
-                            if pane.wrap == 1 or pane.wrap == True:
-                                line = line.split()
-                            for c,j in enumerate(line):
-                                if y > bottom_left_top - top_left_top: break
-                                # Place a space between words after the first if word-wrapping
-                                if c and isinstance(line, list):
+                            for c, j in enumerate(words):
+                                if y > bottom_left_top - top_left_top:
+                                    break
+                                if c and isinstance(words, list) and pane.wrap == 1:
                                     j = ' ' + j
-                                # Move to the next line if the cursor + j would draw past the top right
-                                if top_left_left+x+len(j) > top_right_left:
+                                jw = display_width(j)
+                                if top_left_left + x + jw > top_right_left:
                                     y += 1
                                     x  = 0
                                     if len(j) > 1 and j[0] == ' ':
                                         j = j[1:]
-                                    # Draw ... if j doesnt fit in the line
-                                    if len(j) > top_right_left - top_left_left+x:
+                                    jw = display_width(j)
+                                    avail = top_right_left - top_left_left + x
+                                    if jw > avail:
                                         if not c:
                                             y -= 1
-                                        t = '...'[:(top_right_left - top_left_left+x)]
-                                        self.addstr(top_left_top+i+y, top_left_left+x, t, hilight_attrs)
+                                        t = truncate_to_display_width('...', avail)
+                                        self.addstr(top_left_top + i + y, top_left_left + x, t, attrs)
                                         continue
-                                self.addstr(top_left_top+i+y, top_left_left+x, j, hilight_attrs)
-                                x += len(j)
-                                l = x # The length of the line is the
-                                      # current position on the horizontal.
+                                self.addstr(top_left_top + i + y, top_left_left + x, j, attrs)
+                                x += display_width(j)
 
-                            # Process next line in current frame
-                            # the value for i will increment, presuming there's a newline..
-                            if self.debug:
-                                self.addstr(self.height-8,0, str(i))
-                                self.addstr(self.height-7,0, str(c))
-                                self.addstr(self.height-6,0, str(x))
                             x = 0
                             continue
-                    # TODO: Text alignment
 
-                    # Account for an inverted top left corner
+                    # ---- draw ---- #
                     if top_left_top > top_right_top and y >= top_left_top:
-                        self.addstr(top_left_top+i+y, bottom_left_left+x, line, attrs)
-                    # Account for an inverted bottom left corner
+                        self.addstr(top_left_top + i + y, bottom_left_left + x, line, attrs)
                     elif bottom_left_top < bottom_right_top and y >= bottom_left_top:
-                        self.addstr(top_left_top+i+y, bottom_left_left+x, line, attrs)
+                        self.addstr(top_left_top + i + y, bottom_left_left + x, line, attrs)
                     else:
-                        self.addstr(top_left_top+i+y, top_left_left+x, line, attrs)
-                    x=0
-                # leave cursor at the end of the last line after processing the line.
-                x = l
+                        self.addstr(top_left_top + i + y, top_left_left + x, line, attrs)
+                    x = 0
+
+                x = display_width(line)
                 y += i
 
     def process_input(self):
-        """
-        Send input to panes marked as active after checking for
-        a request to redraw the screen (^L), a request to exit,
-        and optionally display character codes as they're received.
-        """
         try:
             character = self.window.getch()
         except Exception as e:
             character = -1
             if self.debug:
-                self.addstr(self.height-1, self.width - len(e.message) + 1, e.message)
+                msg = str(e)
+                self.addstr(self.height - 1, self.width - len(msg) + 1, msg)
 
-        # Check for any keys we've been told to exit on
         if character in self.exit_keys:
             self.stop()
 
-        # Force redraw the screen on ^L
-        if character == 12:
+        if character == 12:    # ^L — force redraw
             self.window.clear()
             return
 
-        # Send input to active panes (hidden panes can still receive input)
         if character != -1:
-            [pane.process_input(character) for pane in self if pane.active ]
+            [pane.process_input(character) for pane in self if pane.active]
 
-            # Print character codes to the bottom center if debugging.
             if self.debug:
-                self.addstr(self.height-1, self.width/2, " "*4)
-                self.addstr(self.height-1, self.width/2 - len(str(character)) / 2, str(character))
+                self.addstr(self.height - 1, self.width // 2, "    ")
+                s = str(character)
+                self.addstr(self.height - 1, self.width // 2 - len(s) // 2, s)
 
     def calculate_pane_heights_and_widths(self):
         """
-        Update pane heights and widths based on the current window and their desired geometry.
-
-        What to bear in mind:
-          Panes may have a fixed desired size.
-          Panes may be set to expand maximally on either axis.
-          Panes may be set to fit to the sum of their content buffers (accounting for alignment).
-          Panes may be set to float.
-          Two panes set to float and expand on the same axis will not overlap.
-          EXPANDing panes may be adjacent to non-floating self-coordinating panes...
-
-        Two panes wanting a height of ten each on a five line window will overflow offscreen.
-        Using FIT for an axis on an undersized Window will also overflow offscreen.
-
+        Update pane heights and widths based on the window size and each pane's
+        desired geometry (int, FIT, or EXPAND).
         """
-        # Do a pass for heights
-        # Every pane must be represented in order to map properly later
-        growing_panes      = []
-        claimed_columns    = 0
-        for v_index, element in enumerate(self.panes):
-            # Get maximal height from panes in sublists
-            if type(element) == list:
-                expanding_in_sublist = [] # A list we'll append to growing_panes
-                claimed_from_sublist = [] # The heights gleaned from this pass
-                for h_index, pane in enumerate(element):
-                    if pane.hidden: continue
+        # ---- height pass ---- #
+        growing_panes   = []
+        claimed_columns = 0
 
-                    # Let height be max L/R distance from top if self-coordinating
+        for v_index, element in enumerate(self.panes):
+            if type(element) == list:
+                expanding_in_sublist = []
+                claimed_from_sublist = []
+
+                for h_index, pane in enumerate(element):
+                    if pane.hidden:
+                        continue
                     if pane.coords and pane.self_coordinating:
-                        pane.height = max([pane.coords[1][0][0],pane.coords[1][1][0]])
+                        pane.height = max(pane.coords[1][0][0], pane.coords[1][1][0])
                         claimed_from_sublist.append(pane.height)
                         continue
-
                     if len(pane.geometry) < 2:
                         pane.height = 0
                         continue
 
-                    desired_height = pane.geometry[1]
-
-                    if isinstance(desired_height, int):
-                        pane.height = desired_height
+                    desired = pane.geometry[1]
+                    if isinstance(desired, int):
+                        pane.height = desired
                         claimed_from_sublist.append(pane.height)
-                        continue
+                    elif desired == FIT:
+                        buf = "".join(f[0] for f in pane.content)
+                        pane.height = len(buf.split('\n'))
+                        claimed_from_sublist.append(pane.height)
+                    elif desired == EXPAND:
+                        expanding_in_sublist.append(pane)
+                    else:
+                        pane.height = desired
 
-                    elif isinstance(desired_height, str):
-                        # Calculate the width of panes set to FIT
-                        if desired_height == FIT:
-                            buffer = ""
-                            for frame in pane.content:
-                                buffer += frame[0]
-                            pane.height = len(buffer.split('\n'))
-                            claimed_from_sublist.append(pane.height)
-                            continue
-
-                        elif desired_height == EXPAND:
-                            expanding_in_sublist.append(pane)
-                            continue
-
-                    pane.height = desired_height
-
-                # Append any expanding panes to growing_panes as a list
                 if expanding_in_sublist:
                     growing_panes.append(expanding_in_sublist)
-
-                # The total claimed columns for this sublist:
                 if claimed_from_sublist:
                     claimed_columns += max(claimed_from_sublist)
-            else:
-                if element.hidden: continue
 
+            else:
+                if element.hidden:
+                    continue
                 if element.coords and element.self_coordinating:
-                    element.height = max([element.coords[1][0][0], element.coords[1][1][0]])
+                    element.height = max(element.coords[1][0][0], element.coords[1][1][0])
                     claimed_columns += element.height
                     continue
-
                 if len(element.geometry) < 2:
                     element.height = 0
                     continue
 
-                desired_height = element.geometry[1]
-
-                if isinstance(desired_height, int):
-                    element.height = desired_height
+                desired = element.geometry[1]
+                if isinstance(desired, int):
+                    element.height = desired
                     claimed_columns += element.height
-                    continue
+                elif desired == FIT:
+                    buf = "".join(f[0] for f in element.content)
+                    element.height = len(buf.split('\n'))
+                    claimed_columns += element.height
+                elif desired == EXPAND:
+                    growing_panes.append(element)
 
-                elif isinstance(desired_height, str):
-                    # Calculate the width of panes set to FIT
-                    if desired_height == FIT:
-                        buffer = ""
-                        for frame in element.content:
-                            buffer += frame[0]
-                        element.height = len(buffer.split('\n'))
-                        claimed_columns += element.height
-                        continue
-
-                    elif desired_height == EXPAND:
-                        growing_panes.append(element)
-                        continue
-
-        # Calculate how many rows are left by panes with fixed heights
         if growing_panes:
             g = len(growing_panes)
-            remaining_space = self.height - claimed_columns
-            typical_expanse = remaining_space / g
-            tracking = 0
-            rmg = remaining_space % g
+            remaining = self.height - claimed_columns
+            share     = remaining // g
+            rmg       = remaining % g
 
-
-            # Calculate adjustments if the height isn't evenly shared
             for i, pane in enumerate(growing_panes):
                 if isinstance(pane, list):
-                    for k,p in enumerate(pane):
-                        p.height = typical_expanse
+                    for k, p in enumerate(pane):
+                        p.height = share
                         if not i:
-                            # Account for claimed space
-                            for x in range(len(growing_panes)):
+                            for x in range(g):
                                 if rmg == x:
-                                    p.height -= len(growing_panes) - (x+1)
-
-                            # Adjust for an extra column that can't be evenly shared
+                                    p.height -= g - (x + 1)
                             if self.height % 2:
-                                if not claimed_columns:
-                                    p.height += 1
-                                else:
-                                    p.height -= claimed_columns
+                                p.height += (1 if not claimed_columns else -claimed_columns)
                             else:
                                 p.height -= claimed_columns
-                        if not k:
-                            tracking += p.height
                 else:
-                    pane.height = typical_expanse
+                    pane.height = share
                     if not i:
-                        for x in range(len(growing_panes)):
+                        for x in range(g):
                             if rmg == x:
-                                pane.height -= len(growing_panes) - (x+1)
+                                pane.height -= g - (x + 1)
                         if self.height % 2:
-                            if not claimed_columns:
-                                pane.height += 1
-                            else:
-                                pane.height -= claimed_columns
+                            pane.height += (1 if not claimed_columns else -claimed_columns)
                         else:
                             pane.height -= claimed_columns
 
-                    tracking += pane.height
-
-        #s = "Growing rows: %i, %s number of rows: %s, claimed: %i, remaining: %i, remaining/growing: %i,rmodg: %i" % \
-        #    (g, "odd" if self.height % 2 else "even", self.height, claimed_columns,remaining_space, typical_expanse, remaining_space%g)
-#        self.addstr(self.height-1, self.width-len(s),s)
-
-        # Then a pass for widths.
+        # ---- width pass ---- #
         for v_index, element in enumerate(self.panes):
-            claimed_rows    = 0
-            growing_panes   = []
-            # Get panes who will be sharing the x axis
+            claimed_rows  = 0
+            growing_panes = []
+
             if type(element) == list:
                 for h_index, pane in enumerate(element):
-                    if pane.hidden: continue
-
-                    # Calculate the widest part of a self-coordinating pane
-                    if pane.coords and pane.self_coordinating:
-                        rightmost = [pane.coords[0][1][1],pane.coords[1][1][1]]
-                        pane.width = max(rightmost)
+                    if pane.hidden:
                         continue
-
+                    if pane.coords and pane.self_coordinating:
+                        pane.width = max(pane.coords[0][1][1], pane.coords[1][1][1])
+                        continue
                     if not pane.geometry:
                         pane.width = 0
                         continue
 
-                    desired_width = pane.geometry[0]
-
-                    if isinstance(desired_width, int):
-                        claimed_rows += desired_width
-                        pane.width = desired_width
-                        continue
-
-                    elif isinstance(desired_width, str):
-                        # Calculate the width of panes set to FIT
-                        if desired_width == FIT:
-                            buffer = ""
-                            for frame in pane.content:
-                                buffer += frame[0]
-                            pane.width = max(map(len, buffer.split('\n')))
-                            claimed_rows += pane.width
-                            continue
-
-                        elif desired_width == EXPAND:
-                            growing_panes.append(pane)
-                            continue
-
+                    desired = pane.geometry[0]
+                    if isinstance(desired, int):
+                        pane.width    = desired
+                        claimed_rows += desired
+                    elif desired == FIT:
+                        buf = "".join(f[0] for f in pane.content)
+                        pane.width    = max(display_width(l) for l in buf.split('\n')) if buf else 0
+                        claimed_rows += pane.width
+                    elif desired == EXPAND:
+                        growing_panes.append(pane)
             else:
-
-                if element.hidden: continue
-
+                if element.hidden:
+                    continue
+                if element.coords and element.self_coordinating:
+                    element.width = max(element.coords[0][1][1], element.coords[1][1][1])
+                    continue
                 if not element.geometry:
                     element.width = 0
                     continue
 
-                desired_geometry = element.geometry[0]
+                desired = element.geometry[0]
+                if isinstance(desired, int):
+                    element.width = desired
+                elif desired == FIT:
+                    buf = "".join(f[0] for f in element.content)
+                    element.width = max(display_width(l) for l in buf.split('\n')) if buf else 0
+                elif desired == EXPAND:
+                    element.width = self.width
 
-                if element.coords and element.self_coordinating:
-                    rightmost = [element.coords[0][1][1],element.coords[1][1][1]]
-                    element.width = max(rightmost)
-                    continue
+            if growing_panes:
+                share = (self.width - claimed_rows) // len(growing_panes)
+                for pane in growing_panes:
+                    pane.width = share
 
-                if isinstance(desired_geometry, int):
-                    element.width = desired_geometry
-                    continue
-
-                if isinstance(desired_geometry, str):
-                    if desired_geometry == FIT:
-                        buffer = ""
-                        for frame in element.content:
-                            buffer += frame[0]
-                        element.width = max(map(len, buffer.split('\n')))
-                    elif desired_geometry == EXPAND:
-                        element.width = self.width
-
-            # Calculate the space to be shared between panes set to EXPAND
-            remaining_space = self.width - claimed_rows
-            for pane in growing_panes:
-                pane.width = remaining_space / len(growing_panes)
-
-        # Grant the rightmost panes an extra row if self.width is uneven:
+        # Give the rightmost EXPAND pane an extra column on odd-width terminals
         if self.width % 2:
             for pane in self.panes:
                 if isinstance(pane, list):
                     for i, p in enumerate(reversed(pane)):
                         if i == 0 and not p.self_coordinating and p.geometry \
                                 and p.geometry[0] == EXPAND and not p.hidden:
-                                p.width += 1
-                else:                        
+                            p.width += 1
+                else:
                     if not pane.self_coordinating and pane.geometry \
-                        and pane.geometry[0] == EXPAND and not pane.hidden:
+                            and pane.geometry[0] == EXPAND and not pane.hidden:
                         pane.width += 1
-                        continue
 
         if self.debug:
-            self.addstr(self.height-5, 0, "Window height: " + str(self.height))
-            self.addstr(self.height-4, 0, "Window width:  " + str(self.width))
-            self.addstr(self.height-2, 0, "Heights: " + str([p.height for p in self]))
-            self.addstr(self.height-1, 0, "Widths:  " + str([p.width for p in self]))
+            self.addstr(self.height - 5, 0, "Window height: " + str(self.height))
+            self.addstr(self.height - 4, 0, "Window width:  " + str(self.width))
+            self.addstr(self.height - 2, 0, "Heights: " + str([p.height for p in self]))
+            self.addstr(self.height - 1, 0, "Widths:  " + str([p.width  for p in self]))
 
     def coordinate(self, panes=[], index=0):
         """
-        Update pane coordinate tuples based on their height and width relative to other panes
-        within the dimensions of the current window.
-
-        We account for panes with a height of 1 where the bottom coordinates are the same as the top.
-        Account for floating panes and self-coordinating panes adjacent to panes set to EXPAND.
-
-        Coordinates are of the form:
-        [
-          ((top-left-from-top, top-left-from-left),
-           (top-right-from-top, top-right-from-left)),
-          ((bottom-left-from-top, bottom-left-from-left),
-           (bottom-right-from-top, bottom-right-from-left))
-        ]
-
-        We can then use these to determine things such as whether corners are inverted and how
-        many characters may be drawn
-
-        """        
-        y = 0 # height
-
+        Assign coordinate tuples to every pane based on heights and widths.
+        """
+        y = 0
         for i, element in enumerate(self.panes):
-            x = 0 # width
+            x = 0
             if isinstance(element, list):
                 current_height = 0
                 for j, pane in enumerate(element):
-                    if pane.hidden: continue
-                    current_width  = pane.width
-                    current_height = pane.height
-                    upper          = ((y, x), (y, x+current_width))
-                    lower          = ((y+(current_height if current_height > 1 else 0), x),
-                                      (y+(current_height if current_height > 1 else 0), x+current_width))
-                    pane.coords    = [upper, lower]
-                    x += current_width
-                y += (current_height+1 if current_height > 1 else 1)
+                    if pane.hidden:
+                        continue
+                    cw = pane.width
+                    ch = pane.height
+                    current_height = ch
+                    pane.coords = [
+                        ((y, x),          (y, x + cw)),
+                        ((y + (ch if ch > 1 else 0), x),
+                         (y + (ch if ch > 1 else 0), x + cw)),
+                    ]
+                    x += cw
+                y += (current_height + 1 if current_height > 1 else 1)
             else:
-                if element.hidden: continue
-                current_width  = element.width
-                current_height = element.height
-                upper          = ((y, x), (y, x+current_width))
-                lower          = ((y+(current_height if current_height > 1 else 0), x),
-                                  (y+(current_height if current_height > 1 else 0), x+current_width))
-                element.coords = [upper, lower]
-                y += (current_height+1 if current_height > 1 else 1)
+                if element.hidden:
+                    continue
+                cw = element.width
+                ch = element.height
+                element.coords = [
+                    ((y, x),          (y, x + cw)),
+                    ((y + (ch if ch > 1 else 0), x),
+                     (y + (ch if ch > 1 else 0), x + cw)),
+                ]
+                y += (ch + 1 if ch > 1 else 1)
 
             if self.debug:
-                coordinates = "Coordinates: " + str([p.coords for p in self])
-                if len(coordinates) > self.width:
-                    coordinates  = coordinates[:self.width - 3]
-                    coordinates += '...'
-                self.addstr(self.height-3, 0, coordinates)
+                coords = "Coordinates: " + str([p.coords for p in self])
+                self.addstr(self.height - 3, 0, coords[:self.width])
 
     def addstr(self, h, w, text, attrs=0):
         """
-        A safe addstr wrapper
+        Safe addstr wrapper.  Handles arbitrary UTF-8 text via locale settings.
         """
         self.update_window_size()
-        if h > self.height or w > self.width:
+        if h >= self.height or w >= self.width:
             return
         try:
-            # Python curses addstr doesn't deal with non-ascii characters
-            #self.window.addstr(h, w, text.encode("ascii", "ignore"), attrs)
             self.window.addstr(h, w, text, attrs)
-        except Exception as e:
+        except Exception:
             pass
 
     def update_window_size(self):
-        """
-        Update the current window object with its current
-        height and width and clear the screen if they've changed.
-        """
         height, width = self.window.getmaxyx()
         if self.height != height or self.width != width:
             self.height, self.width = height, width
             self.window.clear()
 
     def add(self, pane):
-        """
-        Adds new panes to the window
-        """
         if isinstance(pane, list):
-            initialised_panes = []
-            for p in pane:
-                initialised_panes.append(self.init_pane(p))
-            self.panes.append(initialised_panes)
-        else:    
-            pane = self.init_pane(pane)
-            self.panes.append(pane)
+            self.panes.append([self.init_pane(p) for p in pane])
+        else:
+            self.panes.append(self.init_pane(pane))
 
     def init_pane(self, pane):
         if not pane.name:
-            raise PaneError("Unnamed pane. How're you gonna move this thing around?")
+            raise PaneError("Unnamed pane.")
         pane.active = True
         pane.window = self
-        for existing_pane in self:
-            if existing_pane.name == pane.name:
+        for existing in self:
+            if existing.name == pane.name:
                 raise WindowError("A pane is already attached with the name %s" % pane.name)
         return pane
 
     def block(self):
-        self.window.blocking = True
-        self.window.window.nodelay(0)
+        self.blocking = True
+        self.window.nodelay(0)
 
     def unblock(self):
-        self.window.blocking = False
-        self.window.window.nodelay(1)
+        self.blocking = False
+        self.window.nodelay(1)
 
     def get(self, name, default=None, cache=False):
-        """
-        Get a pane by name, possibly from the cache. Return None if not found.
-        """
-        if cache == True:
-            for pane in self.cache:
+        """Get a pane by name.  Returns *default* if not found."""
+        if cache:
+            for pane in self.pane_cache:
                 if pane.name == name:
                     return pane
             return default
@@ -685,29 +555,28 @@ class Window(object):
         return default
 
     def __setitem__(self, name, new_pane):
-        for i, pane in enumerate(self):
+        for i, pane in enumerate(self.panes):
             if not isinstance(pane, list):
                 if pane.name == name:
                     self.panes[i] = new_pane
+                    return
             else:
-                for x, horiz_pane in enumerate(pane):
-                    if horiz_pane.name == name:
+                for x, hp in enumerate(pane):
+                    if hp.name == name:
                         self.panes[i][x] = new_pane
+                        return
         raise KeyError("Unknown pane %s" % name)
 
     def __getitem__(self, name):
         for pane in self:
             if pane.name == name:
-                return name
+                return pane
         raise KeyError("Unknown pane %s" % name)
 
     def __len__(self):
-        return len([p for p in self])
+        return len(list(self.__iter__()))
 
     def __iter__(self):
-        """
-        Iterate over self.panes by automatically flattening lists.
-        """
         panes = []
         for pane in self.panes:
             if type(pane) == list:
@@ -716,121 +585,97 @@ class Window(object):
                 panes.append(pane)
         return iter(panes)
 
+
+# ---------------------------------------------------------------------------
+# Colour helper
+# ---------------------------------------------------------------------------
+
 def palette(fg, bg=-1):
     """
-    Since curses only supports a finite amount of initialised colour pairs
-    we memoise any selections you've made as an attribute on this function
+    Memoised colour-pair factory.
+    Pass colour names as strings ("red", "blue", …) or curses colour ints.
+    -1 means terminal default.
     """
-
     if not hasattr(palette, "counter"):
-        palette.counter = 1
-
-    if not hasattr(palette, "selections"):
+        palette.counter    = 1
         palette.selections = {}
 
-    selection = "%s%s" % (str(fg), str(bg))
-    if not selection in palette.selections:
-        palette.selections[selection] = palette.counter
+    key = "%s%s" % (fg, bg)
+    if key not in palette.selections:
+        palette.selections[key] = palette.counter
         palette.counter += 1
 
-    # Get available colours
-    colors = [c for c in dir(_curses) if c.startswith('COLOR')]
     if isinstance(fg, str):
-        if not "COLOR_"+fg.upper() in colors:
-            fg = -1
-        else:
-            fg = getattr(_curses, "COLOR_"+fg.upper())
+        fg = getattr(_curses, "COLOR_" + fg.upper(), -1)
     if isinstance(bg, str):
-        if not "COLOR_"+bg.upper() in colors:
-            bg = -1
-        else:
-            bg = getattr(_curses, "COLOR_"+bg.upper())
+        bg = getattr(_curses, "COLOR_" + bg.upper(), -1)
 
-    _curses.init_pair(palette.selections[selection], fg, bg)
-    return _curses.color_pair(palette.selections[selection])
+    _curses.init_pair(palette.selections[key], fg, bg)
+    return _curses.color_pair(palette.selections[key])
+
+
+# ---------------------------------------------------------------------------
+# Base Pane
+# ---------------------------------------------------------------------------
 
 class Pane(object):
     """
     Subclassable data and logic for window panes.
-    Panes can not be placed inside one another.
 
-    The format for content is [text, alignment, attributes]. 
+    geometry = [width, height]  — each axis may be an int, FIT, or EXPAND.
 
-    text can contain newlines and will be printed as-is, overflowing by default.
-    Multiple content elements can inhabit the same line and have different alignments.
+    content  = [[text, align, attrs], …]  — rendered contiguously.
 
-    The wrap attribute can be set to 1 to wrap on words or 2 to wrap by character.
-
-    Panes can be marked as floating, instructing Window to draw any EXPANDing panes around them.
-
+    wrap = 1 → word-wrap   |   wrap = 2 → character-wrap   |   wrap = None → clip
     """
     name              = ''
     window            = None
-    active            = None  # Whether this pane is accepting user input
-    geometry          = []    # x,y (desired width, height)
-                              # Having a height of 1 makes your top and bottom coordinates identical.
-    coords            = []    # [((top-left-from-top, top-left-from-left), (top-right-from-top, top-right-from-left)),
-                              #  ((bottom-left-from-top, bottom-left-from-left), (bottom-right-from-top, bottom-right-from-left))]
-    content           = []    # [[text, align, attrs]] to render. Frames may hold multiple elements, displayed contiguously.
-    height            = None  # Updated every cycle to hold the actual height
-    width             = None  # Updated every cycle to hold the actual width
-    attr              = None  # Default attributes to draw the pane with
-    floating          = None  # Whether to float on top of adjacent EXPANDing panes
-    self_coordinating = None  # Whether this pane defines its own coordinates
-    wrap              = None  # Flow offscreen by default
-    hidden            = None  # The default is to include panes in the draw() steps
+    active            = None
+    geometry          = []
+    coords            = []
+    content           = []
+    height            = None
+    width             = None
+    attr              = None
+    floating          = None
+    self_coordinating = None
+    wrap              = None
+    hidden            = None
 
     def __init__(self, name):
-        """
-        We define self.content here so it's unique across instances.
-        """
         self.name    = name
         self.content = []
 
     def process_input(self, character):
-        """
-        A subclassable method for dealing with input characters.
-        """
         func = None
         try:
             func = getattr(self, "handle_%s" % chr(character), None)
-        except:
+        except Exception:
             pass
         if func:
             func()
 
     def update(self):
-        """
-        A subclassable method for updating content.
-        Called on active panes in every cycle of the event loop.
-        """
         pass
 
     def __iadd__(self, data):
-        """
-        This overrides the += assignment operator to make it possible to append
-        new text to a pane either by assuming the 0th element in self.content
-        or by using a tuple and specifying the index as the first element.
-        """
-        if isinstance(data, (unicode, str)):
-            if len(self.content):
+        if isinstance(data, str):
+            if self.content:
                 self.content[0][0] += data
             else:
                 self.change_content(0, data, align=ALIGN_LEFT, attrs=1)
         elif isinstance(data, (tuple, list)):
-            if len(data) < 2:
+            if len(data) < 2 or not isinstance(data[0], int):
                 return self
-            if not isinstance(data[0], int):
-                return self
-            if len(self.content) < data[0]+1:
+            if len(self.content) < data[0] + 1:
                 self.change_content(data[0], data[1], align=ALIGN_LEFT, attrs=1)
                 return self
-            self.content[data[0]][0] += data[1] 
+            self.content[data[0]][0] += data[1]
         return self
 
     def change_content(self, index, text, align=ALIGN_LEFT, attrs=1):
-        self.whoami = str(self)
-        if index > len(self.content) and len(self.content): return
+        if index > len(self.content) and self.content:
+            return
         if not self.content or index == len(self.content):
             self.content.append([text, align, attrs])
         else:
@@ -841,65 +686,132 @@ class Pane(object):
             return "<Pane %s at %s>" % (self.name, hex(id(self)))
         return "<Pane at %s>" % hex(id(self))
 
+
+# ---------------------------------------------------------------------------
+# TabBar — single-row horizontal tab strip
+# ---------------------------------------------------------------------------
+
+class TabBar(Pane):
+    """
+    A single-line horizontal tab strip that provides a tabs-like interface
+    by hiding/showing sibling panes.
+
+    Usage::
+
+        bar   = TabBar("tabs")
+        pane_a = MyPane("panel_a")
+        pane_b = MyPane("panel_b")
+
+        window.add(bar)
+        window.add(pane_a)
+        window.add(pane_b)
+
+        # Register tabs *after* window.add() so pane references are live
+        bar.register("Alpha", pane_a)
+        bar.register("Beta",  pane_b)
+        bar.select(0)   # show first tab
+
+    Keys:  ← / h   move left    |    → / l   move right
+           Tab / Enter / Space   activate focused tab
+    """
+    geometry = [EXPAND, 1]
+
+    col_normal   = (-1,       -1)       # (fg, bg) for unselected tabs
+    col_selected = ("black", "white")   # (fg, bg) for selected tab
+
+    def __init__(self, name):
+        super().__init__(name)
+        self._tabs    = []   # list of [label, pane]
+        self.selected = 0
+
+    def register(self, label, pane):
+        """Register *pane* as a tab with the given *label*."""
+        self._tabs.append([label, pane])
+
+    def select(self, index):
+        """Show the pane at *index*, hide all others."""
+        if not self._tabs:
+            return
+        self.selected = index % len(self._tabs)
+        for i, (_, pane) in enumerate(self._tabs):
+            pane.hidden = (i != self.selected)
+            pane.active = (i == self.selected)
+        if self.window and self.window.window:
+            self.window.window.clear()
+
+    def update(self):
+        if not self._tabs:
+            return
+        self.content = []
+        col = 0
+        for i, (label, _) in enumerate(self._tabs):
+            text  = "  %s  " % label
+            attrs = palette(*self.col_selected) if i == self.selected \
+                    else palette(*self.col_normal)
+            # Pad the final segment to fill the bar
+            if i == len(self._tabs) - 1 and self.width:
+                text = text + " " * max(0, self.width - col - display_width(text))
+            self.content.append([text, ALIGN_LEFT, attrs])
+            col += display_width(text)
+
+    def process_input(self, character):
+        if not self._tabs:
+            return
+        if character in (260, ord('h')):        # ← or h
+            self.select(self.selected - 1)
+        elif character in (261, ord('l')):       # → or l
+            self.select(self.selected + 1)
+        elif character in (9, 10, 13, 32):       # Tab / Enter / Space
+            self.select(self.selected)
+
+
+# ---------------------------------------------------------------------------
+# Convenience subclasses
+# ---------------------------------------------------------------------------
+
 class Menu(Pane):
     """
-    Defines a menu where items call local methods.
+    Vertical menu where items call local methods.
+    items = [[selected_bool, label, method_name], ...]
     """
     geometry = [EXPAND, EXPAND]
-    # Default and selection colours.
-    col = [-1, -1] # fg, bg
-    sel = [-1,  "blue"]
+    col = (-1, -1)
+    sel = (-1, "blue")
     items = []
 
     def update(self):
         for i, item in enumerate(self.items):
-            if item[0]:
-                colours = palette(self.sel[0], self.sel[1])
-            else:
-                colours = palette(self.col[0], self.col[1])
-            text = ' ' + item[1]
-            spaces = ' ' * (self.width - len(text)) 
-            text += spaces
+            colours = palette(*self.sel) if item[0] else palette(*self.col)
+            text  = ' ' + item[1]
+            text += ' ' * max(0, self.width - display_width(text))
             self.change_content(i, text + '\n', ALIGN_LEFT, colours)
 
     def process_input(self, character):
-        # Handle the return key
-        if character == 10 or character == 13:
-            for i, item in enumerate(self.items):
-                if item[0]:    
+        if character in (10, 13):
+            for item in self.items:
+                if item[0]:
                     func = getattr(self, item[2].lower(), None)
                     if func:
                         func()
-
-        # Handle navigating the menu
-        elif character in [259, 258, 339, 338]:
+        elif character in (259, 258, 339, 338):
             for i, item in enumerate(self.items):
-                if item[0]:    
-                    if character == 259: # up arrow
+                if item[0]:
+                    if character == 259:
                         if i == 0: break
-                        item[0] = 0
-                        self.items[i-1][0] = 1
-                        break
-                    if character == 258: # down arrow
-                        if i+1 >= len(self.items): break
-                        item[0] = 0
-                        self.items[i+1][0] = 1
-                        break
-                    if character == 339: # page up
-                        item[0] = 0
-                        self.items[0][0] = 1
-                        break
-                    if character == 338: # page down
-                        item[0] = 0
-                        self.items[-1][0] = 1
-                        break
+                        item[0] = 0; self.items[i - 1][0] = 1; break
+                    if character == 258:
+                        if i + 1 >= len(self.items): break
+                        item[0] = 0; self.items[i + 1][0] = 1; break
+                    if character == 339:
+                        item[0] = 0; self.items[0][0] = 1; break
+                    if character == 338:
+                        item[0] = 0; self.items[-1][0] = 1; break
+
 
 class Editor(Pane):
-    """
-    Defines a text editor/input pane.
-    """
+    """Simple text editor / input pane."""
     geometry = [EXPAND, EXPAND]
-    buffer = ""
+    buffer   = ""
 
     def update(self):
         if len(self.content) >= 1:
@@ -907,48 +819,41 @@ class Editor(Pane):
 
     def process_input(self, character):
         self.window.window.clear()
-        if character == 23 and self.buffer:      # Clear buffer on ^W
+        if character == 23 and self.buffer:
             self.buffer = ''
-        if character == 263 and self.buffer:     # Handle backspace
+        elif character == 263 and self.buffer:
             self.buffer = self.buffer[:-1]
-        elif character == 10 or character == 13: # Handle the return key
+        elif character in (10, 13):
             self.buffer += "\n"
         else:
             try:
-                self.buffer += chr(character)   # Append input to buffer
-            except:
-                # Shouldn't no-op here but there really isn't anything to do.
+                self.buffer += chr(character)
+            except Exception:
                 pass
         import random
-        colours = palette(-1, random.choice(["blue","red"]))
+        colours = palette(-1, random.choice(["blue", "red"]))
         self.change_content(0, self.buffer, ALIGN_LEFT, colours)
 
+
 class Pager(Pane):
-    """
-    Defines a scrolling pager for long multi-line strings.
-    """
-    geometry  = [EXPAND, EXPAND]
-    data      = ""
-    outbuffer = ""
-    position  = 0
+    """Scrolling pager.  Set pager.data to the text to display."""
+    geometry = [EXPAND, EXPAND]
+    data     = ""
+    position = 0
 
     def update(self):
-        self.outbuffer = self.data.split('\n')[self.position:]
-        self.change_content(1, '\n'.join(self.outbuffer))
+        lines = self.data.split('\n')[self.position:]
+        self.change_content(0, '\n'.join(lines))
 
     def process_input(self, character):
         self.window.window.clear()
-        if character == 259:                       # Up arrow
-            if self.position != 0:
-                self.position -= 1
-        elif character == 258:                     # Down arrow
+        if character == 259:
+            if self.position: self.position -= 1
+        elif character == 258:
             self.position += 1
-        elif character == 339:                     # Page up
-            if self.position - self.height < 0:
-                self.position = 0
-            else:
-                self.position -= self.height
-        elif character == 338:                     # Page down
-            if not self.position + self.height > len(self.data.split('\n')):
+        elif character == 339:
+            self.position = max(0, self.position - self.height)
+        elif character == 338:
+            total = len(self.data.split('\n'))
+            if self.position + self.height < total:
                 self.position += self.height
-

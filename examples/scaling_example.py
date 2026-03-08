@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 from window import *
 
 class TestPane(Pane):
@@ -14,7 +14,7 @@ class TestPane(Pane):
 		if self.name == "test pane 1":
 			new_line = 'Scaling example.\n^D or ^Q to exit.\n'
 		else:
-			new_line = hashlib.sha1(str(random.randint(0,9))).hexdigest() + '\n'
+			new_line = hashlib.sha1(str(random.randint(0,9)).encode()).hexdigest() + '\n'
 		new_line += "h: %i w: %i\n" % (self.height, self.width)
 		self.change_content(0, new_line)
 		if len(self.content) >= 2:
@@ -93,11 +93,11 @@ class Status(Pane):
 
 	def quit_for_debugging(self):
 		self.window.stop()
-		print self.window.height % 2
-		print self.window.height
-		print pane1.height
-		print pane1.coords
-		print self.coords
+		print(self.window.height % 2)
+		print(self.window.height)
+		print(pane1.height)
+		print(pane1.coords)
+		print(self.coords)
 
 if __name__ == "__main__":
 	window = Window(True)
@@ -135,7 +135,7 @@ if __name__ == "__main__":
 		window.start()
 	except KeyboardInterrupt:
 		window.stop()
-	except Exception, e:
+	except Exception as e:
 		window.stop()
-		print e.message
+		print(str(e))
 
